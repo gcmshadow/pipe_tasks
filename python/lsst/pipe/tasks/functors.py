@@ -6,6 +6,7 @@ import numpy as np
 import astropy.units as u
 
 from lsst.daf.persistence import doImport
+from lsst.daf.butler import DeferredDatasetHandle
 from .parquetTable import MultilevelParquetTable
 
 
@@ -165,6 +166,10 @@ class Functor(object):
             columns = self.multilevelColumns(parq)
             df = parq.toDataFrame(columns=columns, droplevels=False)
             df = self._setLevels(df)
+        elif isinstance(parq, DeferredDatasetHandle):
+            import pdb
+            pdb.set_trace()
+            # We are in _get_cols!
         else:
             columns = self.columns
             df = parq.toDataFrame(columns=columns)
