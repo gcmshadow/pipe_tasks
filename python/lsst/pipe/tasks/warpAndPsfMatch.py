@@ -94,6 +94,7 @@ class WarpAndPsfMatchTask(pipeBase.Task):
             self.log.warn("Neither makeDirect nor makePsfMatched requested")
 
         # Warp PSF before overwriting exposure
+        import pdb; pdb.set_trace()
         xyTransform = afwGeom.makeWcsPairTransform(exposure.getWcs(), wcs)
         psfWarped = WarpedPsf(exposure.getPsf(), xyTransform)
 

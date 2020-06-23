@@ -2410,6 +2410,7 @@ class CompareWarpAssembleCoaddTask(AssembleCoaddTask):
             except Exception as exc:
                 self.log.warn("Unable to rescale variance of warp (%s); leaving it as-is" % (exc,))
         mi -= templateCoadd.getMaskedImage()
+        warp.writeFits(self._dataRef2DebugPath('warpDiff', warpRef))
         return warp
 
     def _dataRef2DebugPath(self, prefix, warpRef, coaddLevel=False):

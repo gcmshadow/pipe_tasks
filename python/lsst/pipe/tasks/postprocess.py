@@ -790,7 +790,8 @@ class TransformObjectCatalogTask(TransformCatalogBaseTask, pipeBase.PipelineTask
         # Default runQuantum might be fune
         import pdb; pdb.set_trace()
         inputs = butlerQC.get(inputRefs)
-        outputs = self.run(**inputs)
+        outputs = self.run(parq=inputs['inputCatalog'], funcs=self.funcs,
+                           dataId=outputRefs.outputCatalog.dataId)
         butlerQC.put(outputs, outputRefs)
 
 
