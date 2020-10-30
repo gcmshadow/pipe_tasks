@@ -7,6 +7,7 @@ import astropy.units as u
 
 from lsst.daf.persistence import doImport
 from .parquetTable import MultilevelParquetTable
+from lsst.daf.butler import DeferredDatasetHandle
 
 
 def init_fromDict(initDict, basePath='lsst.pipe.tasks.functors',
@@ -296,8 +297,12 @@ class CompositeFunctor(Functor):
                 except Exception:
                     valDict[k] = f.fail(subdf)
         else:
-            columns = self.columns
-            df = parq.toDataFrame(columns=columns)
+            if isinstance(parq, DeferredDatasetHandle):
+                df = parq.get(columns=self.columns)
+            elif isinstance(parq, pd.DataFrame):
+                df = parq
+            else:
+                df = parq.toDataFrame(columns=self.columns)
             valDict = {k: f._func(df) for k, f in self.funcDict.items()}
 
         try:

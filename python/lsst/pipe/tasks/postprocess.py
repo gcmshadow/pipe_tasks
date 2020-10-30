@@ -206,7 +206,25 @@ class WriteObjectTableTask(CmdLineTask):
         pass
 
 
-class WriteSourceTableConfig(pexConfig.Config):
+class WriteSourceTableConnections(pipeBase.PipelineTaskConnections,
+                                  dimensions=("instrument", "visit", "detector")):
+
+    catalog = pipeBase.connectionTypes.Input(
+        doc="Input full-depth catalog of sources produced by CalibrateTask",
+        name="src",
+        storageClass="SourceCatalog",
+        dimensions=("instrument", "visit", "detector")
+    )
+    outputCatalog = pipeBase.connectionTypes.Output(
+        doc="Catalog of sources, `src` in Parquet format",
+        name="source",
+        storageClass="DataFrame",
+        dimensions=("instrument", "visit", "detector")
+    )
+
+
+class WriteSourceTableConfig(pipeBase.PipelineTaskConfig,
+                             pipelineConnections=WriteSourceTableConnections):
     doApplyExternalPhotoCalib = pexConfig.Field(
         dtype=bool,
         default=False,
@@ -221,7 +239,7 @@ class WriteSourceTableConfig(pexConfig.Config):
     )
 
 
-class WriteSourceTableTask(CmdLineTask):
+class WriteSourceTableTask(CmdLineTask, pipeBase.PipelineTask):
     """Write source table to parquet
     """
     _DefaultName = "writeSourceTable"
@@ -235,6 +253,13 @@ class WriteSourceTableTask(CmdLineTask):
         ccdVisitId = dataRef.get('ccdExposureId')
         result = self.run(src, ccdVisitId=ccdVisitId)
         dataRef.put(result.table, 'source')
+
+    def runQuantum(self, butlerQC, inputRefs, outputRefs):
+        inputs = butlerQC.get(inputRefs)
+        inputs['ccdVisitId'] = butlerQC.quantum.dataId.pack("visit_detector")
+        result = self.run(**inputs).table
+        outputs = pipeBase.Struct(outputCatalog=result.toDataFrame())
+        butlerQC.put(outputs, outputRefs)
 
     def run(self, catalog, ccdVisitId=None):
         """Convert `src` catalog to parquet
@@ -252,7 +277,7 @@ class WriteSourceTableTask(CmdLineTask):
             ``table``
                 `ParquetTable` version of the input catalog
         """
-        self.log.info("Generating parquet table from src catalog")
+        self.log.info("Generating parquet table from src catalog %s", ccdVisitId)
         df = catalog.asAstropy().to_pandas().set_index('id', drop=True)
         df['ccdVisitId'] = ccdVisitId
         return pipeBase.Struct(table=ParquetTable(dataFrame=df))
@@ -438,7 +463,24 @@ class PostprocessAnalysis(object):
         return self._df
 
 
-class TransformCatalogBaseConfig(pexConfig.Config):
+class TransformCatalogBaseConnections(pipeBase.PipelineTaskConnections,
+                                      dimensions=()):
+    """Expected Connections for subclasses of TransformCatalogBaseTask.
+
+    Must be subclassed.
+    """
+    inputCatalog = pipeBase.connectionTypes.Input(
+        name="",
+        storageClass="DataFrame",
+    )
+    outputCatalog = pipeBase.connectionTypes.Output(
+        name="",
+        storageClass="DataFrame",
+    )
+
+
+class TransformCatalogBaseConfig(pipeBase.PipelineTaskConfig,
+                                 pipelineConnections=TransformCatalogBaseConnections):
     functorFile = pexConfig.Field(
         dtype=str,
         doc='Path to YAML file specifying functors to be computed',
@@ -447,7 +489,7 @@ class TransformCatalogBaseConfig(pexConfig.Config):
     )
 
 
-class TransformCatalogBaseTask(CmdLineTask):
+class TransformCatalogBaseTask(CmdLineTask, pipeBase.PipelineTask):
     """Base class for transforming/standardizing a catalog
 
     by applying functors that convert units and apply calibrations.
@@ -534,6 +576,21 @@ class TransformCatalogBaseTask(CmdLineTask):
     def ConfigClass(self):
         raise NotImplementedError('Subclass must define "ConfigClass" attribute')
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.config.functorFile:
+            self.log.info('Loading tranform functor definitions from %s',
+                          self.config.functorFile)
+            self.funcs = CompositeFunctor.from_file(self.config.functorFile)
+            self.funcs.update(dict(PostprocessAnalysis._defaultFuncs))
+
+    def runQuantum(self, butlerQC, inputRefs, outputRefs):
+        inputs = butlerQC.get(inputRefs)
+        result = self.run(parq=inputs['inputCatalog'], funcs=self.funcs,
+                          dataId=outputRefs.outputCatalog.dataId)
+        outputs = pipeBase.Struct(outputCatalog=result)
+        butlerQC.put(outputs, outputRefs)
+
     def runDataRef(self, dataRef):
         parq = dataRef.get()
         funcs = self.getFunctors()
@@ -569,14 +626,12 @@ class TransformCatalogBaseTask(CmdLineTask):
         return df
 
     def getFunctors(self):
-        funcs = CompositeFunctor.from_file(self.config.functorFile)
-        funcs.update(dict(PostprocessAnalysis._defaultFuncs))
-        return funcs
+        return self.funcs
 
     def getAnalysis(self, parq, funcs=None, filt=None):
         # Avoids disk access if funcs is passed
         if funcs is None:
-            funcs = self.getFunctors()
+            funcs = self.funcs
         analysis = PostprocessAnalysis(parq, funcs, filt=filt)
         return analysis
 
@@ -764,7 +819,27 @@ class ConsolidateObjectTableTask(CmdLineTask):
         pass
 
 
-class TransformSourceTableConfig(TransformCatalogBaseConfig):
+class TransformSourceTableConnections(pipeBase.PipelineTaskConnections,
+                                      dimensions=("instrument", "visit", "detector")):
+
+    inputCatalog = pipeBase.connectionTypes.Input(
+        doc="Wide input catalog of sources produced by WriteSourceTableTask",
+        name="source",
+        storageClass="DataFrame",
+        dimensions=("instrument", "visit", "detector"),
+        deferLoad=True
+    )
+    outputCatalog = pipeBase.connectionTypes.Output(
+        doc="Narrower, per-detector Source Table transformed and converted per a "
+            "specified set of functors",
+        name="sourceTable",
+        storageClass="DataFrame",
+        dimensions=("instrument", "visit", "detector")
+    )
+
+
+class TransformSourceTableConfig(TransformCatalogBaseConfig,
+                                 pipelineConnections=TransformSourceTableConnections):
     pass
 
 
@@ -776,11 +851,6 @@ class TransformSourceTableTask(TransformCatalogBaseTask):
 
     inputDataset = 'source'
     outputDataset = 'sourceTable'
-
-    def writeMetadata(self, dataRef):
-        """No metadata to write.
-        """
-        pass
 
     @classmethod
     def _makeArgumentParser(cls):
@@ -1014,11 +1084,29 @@ class VisitDataIdContainer(DataIdContainer):
         self.refList = outputRefList
 
 
-class ConsolidateSourceTableConfig(pexConfig.Config):
+class ConsolidateSourceTableConnections(pipeBase.PipelineTaskConnections,
+                                        dimensions=("instrument", "visit")):
+    inputCatalogs = pipeBase.connectionTypes.Input(
+        doc="Input per-detector Source Tables",
+        name="sourceTable",
+        storageClass="DataFrame",
+        dimensions=("instrument", "visit", "detector"),
+        multiple=True
+    )
+    outputCatalog = pipeBase.connectionTypes.Output(
+        doc="Per-visit concatenation of Source Table",
+        name="sourceTable_visit",
+        storageClass="DataFrame",
+        dimensions=("instrument", "visit")
+    )
+
+
+class ConsolidateSourceTableConfig(pipeBase.PipelineTaskConfig,
+                                   pipelineConnections=ConsolidateSourceTableConnections):
     pass
 
 
-class ConsolidateSourceTableTask(CmdLineTask):
+class ConsolidateSourceTableTask(CmdLineTask, pipeBase.PipelineTask):
     """Concatenate `sourceTable` list into a per-visit `sourceTable_visit`
     """
     _DefaultName = 'consolidateSourceTable'
@@ -1026,6 +1114,13 @@ class ConsolidateSourceTableTask(CmdLineTask):
 
     inputDataset = 'sourceTable'
     outputDataset = 'sourceTable_visit'
+
+    def runQuantum(self, butlerQC, inputRefs, outputRefs):
+        inputs = butlerQC.get(inputRefs)
+        self.log.info("Concatenating %s per-detector Source Tables",
+                      len(inputs['inputCatalogs']))
+        df = pd.concat(inputs['inputCatalogs'])
+        butlerQC.put(pipeBase.Struct(outputCatalog=df), outputRefs)
 
     def runDataRef(self, dataRefList):
         self.log.info("Concatenating %s per-detector Source Tables", len(dataRefList))
