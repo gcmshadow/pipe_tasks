@@ -158,9 +158,9 @@ class MeasureExtendedPsfTask(pipeBase.CmdLineTask):
                     if allStars:
                         allStars.extend(readStars)
                     else:
-                        self.log.info(f"No BrightStarStamps found for dataId {dataId}; skipping it")
                         allStars = readStars
                 except bE.NoResults:
+                    self.log.info(f"No BrightStarStamps found for dataId {dataId}; skipping it")
                     continue
             # TODO: DM-????? add computation of per-star weights
             coaddSubregion = afwMath.statisticsStack(allStars.getMaskedImages(), statsFlags, statsControl)
