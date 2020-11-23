@@ -154,6 +154,28 @@ class Functor(object):
 
         return parq._colsFromDict(columnDict)
 
+    def multilevelColumnsGen3(self, parq):
+        if not set(parq.columnLevels) == set(self._columnLevels):
+            raise ValueError('ParquetTable does not have the expected column levels. '
+                             f'Got {parq.columnLevels}; expected {self._columnLevels}.')
+
+        columnDict = {'column': self.columns,
+                      'dataset': self.dataset}
+        if self.filt is None:
+            if 'filter' in parq.columnLevels:
+                if self.dataset == 'ref':
+                    columnDict['filter'] = parq.columnLevelNames['filter'][0]
+                else:
+                    raise ValueError(f"'filt' not set for functor {self.name}"
+                                     f"(dataset {self.dataset}) "
+                                     "and ParquetTable "
+                                     "contains multiple filters in column index. "
+                                     "Set 'filt' or set 'dataset' to 'ref'.")
+        else:
+            columnDict['filter'] = self.filt
+
+        return parq._colsFromDict(columnDict)
+
     def _func(self, df, dropna=True):
         raise NotImplementedError('Must define calculation on dataframe')
 
@@ -290,7 +312,10 @@ class CompositeFunctor(Functor):
                                      for f in self.funcDict.values()] for x in y]))
 
     def __call__(self, parq, **kwargs):
-        if isinstance(parq, MultilevelParquetTable):
+        if isinstance(parq, DeferredDatasetHandle):
+            columns = parq.get(columns=c
+
+        elif isinstance(parq, MultilevelParquetTable):
             columns = self.multilevelColumns(parq)
             df = parq.toDataFrame(columns=columns, droplevels=False)
             valDict = {}

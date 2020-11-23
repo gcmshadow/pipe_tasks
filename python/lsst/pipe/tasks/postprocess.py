@@ -32,6 +32,7 @@ import lsst.afw.table as afwTable
 from lsst.meas.base import SingleFrameMeasurementTask
 from lsst.pipe.base import CmdLineTask, ArgumentParser, DataIdContainer
 from lsst.coadd.utils.coaddDataIdContainer import CoaddDataIdContainer
+from lsst.daf.butler import DeferredDatasetHandle
 
 from .parquetTable import ParquetTable
 from .multiBandUtils import makeMergeArgumentParser, MergeSourcesRunner
@@ -148,6 +149,7 @@ class WriteObjectTableTask(CmdLineTask, pipeBase.PipelineTask):
     def runQuantum(self, butlerQC, inputRefs, outputRefs):
         inputs = butlerQC.get(inputRefs)
 
+        import pdb; pdb.set_trace()
         measDict = {ref.dataId['abstract_filter']: {'meas': cat} for ref, cat in
                     zip(inputRefs.inputCatalogMeas, inputs['inputCatalogMeas'])}
         forcedSourceDict = {ref.dataId['abstract_filter']: {'forced_src': cat} for ref, cat in
@@ -161,9 +163,8 @@ class WriteObjectTableTask(CmdLineTask, pipeBase.PipelineTask):
             catalogs[filt]['ref'] = inputs['inputCatalogRef']
 
         dataId = inputRefs.inputCatalogMeas[0].dataId
-        outputs = self.run(catalogs=catalogs, tract=dataId['tract'], patch=dataId['patch'])
-        import pdb; pdb.set_trace()
-        #pipeBase.Struct(outputCatalog=output.)
+        parq = self.run(catalogs=catalogs, tract=dataId['tract'], patch=dataId['patch'])
+        outputs = pipeBase.Struct(dataFrame=parq.toDataFrame())
         butlerQC.put(outputs, outputRefs)
 
     @classmethod
@@ -484,6 +485,7 @@ class PostprocessAnalysis(object):
 
     def compute(self, dropna=False, pool=None):
         # map over multiple parquet tables
+        import pdb; pdb.set_trace()
         if type(self.parq) in (list, tuple):
             if pool is None:
                 dflist = [self.func(parq, dropna=dropna) for parq in self.parq]
@@ -756,8 +758,17 @@ class TransformObjectCatalogTask(TransformCatalogBaseTask, pipeBase.PipelineTask
         templateDf = pd.DataFrame()
         # Perform transform for data of filters that exist in parq and are
         # specified in config.filterMap
-        for filt in parq.columnLevelNames['filter']:
-            if filt not in self.config.filterMap:
+        if isinstance(parq, DeferredDatasetHandle):
+            columns = parq.get(component='columns')
+            filters = columns.unique(level=1)
+            filterMap = dict([(value, key) for key, value in self.config.filterMap.items()])
+        else:
+            filters = parq.columnLevelNames['filter']
+            filterMap = self.config.filterMap
+
+        import pdb; pdb.set_trace()
+        for filt in filters:
+            if filt not in filterMap:
                 self.log.info("Ignoring %s data in the input", filt)
                 continue
             self.log.info("Transforming the catalog of filter %s", filt)
@@ -785,6 +796,8 @@ class TransformObjectCatalogTask(TransformCatalogBaseTask, pipeBase.PipelineTask
 
         self.log.info("Made a table of %d columns and %d rows", len(df.columns), len(df))
         return df
+
+
 
     def runQuantum(self, butlerQC, inputRefs, outputRefs):
         # Default runQuantum might be fune
