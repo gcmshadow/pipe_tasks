@@ -37,7 +37,6 @@ import lsst.pipe.base.connectionTypes as cT
 from lsst.pex.exceptions import LogicError, InvalidParameterError
 from lsst.coadd.utils.coaddDataIdContainer import ExistingCoaddDataIdContainer
 from lsst.geom import SpherePoint, radians, Box2D
-from lsst.sphgeom import ConvexPolygon
 
 __all__ = ["InsertFakesConfig", "InsertFakesTask"]
 
@@ -516,14 +515,13 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
         """
 
         bbox = Box2D(image.getBBox())
-        corners = bbox.getCorners()
-
-        skyCorners = wcs.pixelToSky(corners)
-        region = ConvexPolygon([s.getVector() for s in skyCorners])
 
         def trim(row):
-            coord = SpherePoint(row[self.config.raColName], row[self.config.decColName], radians)
-            return region.contains(coord.getVector())
+            coord = SpherePoint(row[self.config.raColName],
+                                row[self.config.decColName],
+                                radians)
+            cent = wcs.skyToPixel(coord)
+            return bbox.contains(cent)
 
         return fakeCat[fakeCat.apply(trim, axis=1)]
 
