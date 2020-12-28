@@ -110,7 +110,7 @@ class VisualizeBinExpTask(pipeBase.PipelineTask,
         outputExp = afwImage.makeExposure(binned)
 
         outputExp.setInfo(inputExp.getInfo())
-        outputExp.setFilter(inputExp.getFilter())
+        outputExp.setFilterLabel(inputExp.getFilterLabel())
         outputExp.setMetadata(inputExp.getMetadata())
         outputExp.setDetector(inputExp.getDetector())
 

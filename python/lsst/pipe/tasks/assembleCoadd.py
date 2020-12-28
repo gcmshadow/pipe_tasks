@@ -829,7 +829,7 @@ class AssembleCoaddTask(CoaddBaseTask, pipeBase.PipelineTask):
                            for tempExpRef in tempExpRefList]
         numCcds = sum(len(tempExp.getInfo().getCoaddInputs().ccds) for tempExp in tempExpList)
 
-        coaddExposure.setFilter(tempExpList[0].getFilter())
+        coaddExposure.setFilterLabel(afwImage.FilterLabel(tempExpList[0].getFilterLabel().bandLabel))
         coaddInputs = coaddExposure.getInfo().getCoaddInputs()
         coaddInputs.ccds.reserve(numCcds)
         coaddInputs.visits.reserve(len(tempExpList))
