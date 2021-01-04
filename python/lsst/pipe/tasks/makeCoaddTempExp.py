@@ -573,7 +573,9 @@ class MakeCoaddTempExpTask(CoaddBaseTask):
 
 class MakeWarpConnections(pipeBase.PipelineTaskConnections,
                           dimensions=("tract", "patch", "skymap", "instrument", "visit"),
-                          defaultTemplates={"coaddName": "deep"}):
+                          defaultTemplates={"coaddName": "deep",
+                                            "skyWcsName": "jointcal",
+                                            "photoCalibName": "fgcmcal"}):
     calExpList = cT.Input(
         doc="Input exposures to be resampled and optionally PSF-matched onto a SkyMap projection/patch",
         name="calexp",
@@ -601,6 +603,30 @@ class MakeWarpConnections(pipeBase.PipelineTaskConnections,
         storageClass="SkyMap",
         dimensions=("skymap",),
     )
+    externalSkyWcsTractList = cT.Input(
+        doc="Input external SkyWcs (aggregated per-visit) when run per-tract",
+        name="{skyWcsName}SkyWcsCatalog",
+        dimensions=("instrument", "visit", "tract"),
+        multiple=True,
+    )
+    externalSkyWcsGlobalList = cT.Input(
+        doc="Input external SkyWcs (aggregated per-visit) when run globally",
+        name="{skyWcsName}SkyWcsCatalog",
+        dimensions=("instrument", "visit"),
+        multiple=True,
+    )
+    externalPhotoCalibTractList = cT.Input(
+        doc="Input external PhotoCalib (aggregated per-visit) when run per-tract",
+        name="{photoCalibName}PhotoCalibCatalog",
+        dimensions=("instrument", "visit", "tract"),
+        multiple=True,
+    )
+    externalPhotocalibGlobalList = cT.Input(
+        doc="Input external PhotoCalib (aggregated per-visit) when run globally",
+        name="{photoCalibName}PhotoCalibCatalog",
+        dimensions=("instrument", "visit"),
+        multiple=True,
+    )
     direct = cT.Output(
         doc=("Output direct warped exposure (previously called CoaddTempExp), produced by resampling ",
              "calexps onto the skyMap patch geometry."),
@@ -622,6 +648,22 @@ class MakeWarpConnections(pipeBase.PipelineTaskConnections,
             self.inputs.remove("backgroundList")
         if not config.doApplySkyCorr:
             self.inputs.remove("skyCorrList")
+        if config.doApplyExternalSkyWcs:
+            if config.useGlobalExternalSkyWcs:
+                self.inputs.remove("externalSkyWcsTractList")
+            else:
+                self.inputs.remove("externalSkyWcsGlobalList")
+        else:
+            self.inputs.remove("externalSkyWcsTractList")
+            self.inputs.remove("externalSkyWcsGlobalList")
+        if config.doApplyExternalPhotoCalib:
+            if config.useGlobalExternalPhotoCalib:
+                self.inputs.remove("externalPhotoCalibTractList")
+            else:
+                self.inputs.remove("externalPhotoCalibGlobalList")
+        else:
+            self.inputs.remove("externalPhotoCalibTractList")
+            self.inputs.remove("externalPhotoCalibGlobalList")
         if not config.makeDirect:
             self.outputs.remove("direct")
         if not config.makePsfMatched:
@@ -682,6 +724,23 @@ class MakeWarpTask(MakeCoaddTempExpTask, pipeBase.PipelineTask):
         assert(all(visits[0] == visit for visit in visits))
         visitId = visits[0]
 
+        if self.config.doApplyExternalSkyWcs:
+            if self.config.useGlobalExternalSkyWcs:
+                skyWcsInputList = inputs.pop("externalSkyWcsGlobalList")
+            else:
+                skyWcsInputList = inputs.pop("externalSkyWcsTractList")
+            # Need to decompose the inputs into dataIds, blah.
+        else:
+            externalSkyWcsDict = None
+
+        if self.config.doApplyExternalPhotoCalib:
+            if self.config.useGlobalExternalPhotoCalib:
+                photoCalibInputList = inputs.pop("externalPhotoCalibGlobalList")
+            else:
+                photoCalibInputList = inputs.pop("externalPhotoCalibTractList")
+        else:
+            externalPhotoCalibDict = None
+
         self.prepareCalibratedExposures(**inputs)
         results = self.run(**inputs, visitId=visitId, ccdIdList=ccdIdList, dataIdList=dataIdList,
                            skyInfo=skyInfo)
@@ -690,10 +749,9 @@ class MakeWarpTask(MakeCoaddTempExpTask, pipeBase.PipelineTask):
         if self.config.makePsfMatched:
             butlerQC.put(results.exposures["psfMatched"], outputRefs.psfMatched)
 
-    def prepareCalibratedExposures(self, calExpList, backgroundList=None, skyCorrList=None):
+    def prepareCalibratedExposures(self, calExpList, backgroundList=None, skyCorrList=None,
+                                   externalSkyWcsList=None, externalPhotoCalibList=None):
         """Calibrate and add backgrounds to input calExpList in place
-
-        TODO DM-17062: apply jointcal/meas_mosaic here
 
         Parameters
         ----------
@@ -703,6 +761,12 @@ class MakeWarpTask(MakeCoaddTempExpTask, pipeBase.PipelineTask):
             Sequence of backgrounds to be added back in if bgSubtracted=False
         skyCorrList : `list` of `lsst.afw.math.backgroundList`
             Sequence of background corrections to be subtracted if doApplySkyCorr=True
+        externalSkyWcsDict : `dict` ['int': `lsst.afw.table.ExposureCatalog`]
+            Sequence of skyWcs catalogs to be applied (if doApplyExternalSkyWcs=True).
+            Keys will be visit numbers.
+        externalPhotoCalibDict : `dict` ['int': `lsst.afw.XXXXXX`]
+            Sequence of photoCalib catalogs to be applied (if doApplyExternalPhotoCalib=True).
+            Keys will be visit numbers.
         """
         backgroundList = len(calExpList)*[None] if backgroundList is None else backgroundList
         skyCorrList = len(calExpList)*[None] if skyCorrList is None else skyCorrList
