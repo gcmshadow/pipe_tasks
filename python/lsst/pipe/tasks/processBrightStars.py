@@ -241,6 +241,10 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                 idealBBox = geom.Box2I(geom.Point2I(bboxCorner), geom.Extent2I(self.config.stampSize))
                 bottomLeft = idealBBox.getBegin()
                 topRight = idealBBox.getEnd()
+                # can any pixel be salvaged?
+                if np.any(np.array(bottomLeft) > np.array(inputExposure.getDimensions())) or \
+                   np.any(np.array(topRight) < 0):
+                    continue
                 # create smaller subBBox containing overlapping pixels
                 subBBoxCorner = bottomLeft.clone()
                 subBBoxExtent = idealBBox.getDimensions()
@@ -262,12 +266,12 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                 subStarIm = inputExposure.getCutout(subSp, subBBoxExtent)
                 # and create full-sized stamp with NO_DATA elsewhere
                 starIm = afwImage.ExposureF(idealBBox)
+                starIm.setDetector(inputExposure.getDetector())
+                starIm.setWcs(inputExposure.getWcs())
                 starIm.image.array[:] = np.nan
                 starIm.mask.array[:] = 2**bmp['NO_DATA']
                 starIm.image[subBBox] = subStarIm.image
                 starIm.mask[subBBox] = subStarIm.mask
-                if np.all(np.isnan(starIm.image.array)):
-                    continue
             starIms.append(inputExposure.getCutout(sp, geom.Extent2I(self.config.stampSize)))
             pixCenters.append(cpix)
             GMags.append(allGMags[j])
