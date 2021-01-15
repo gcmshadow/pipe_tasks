@@ -36,6 +36,7 @@ from lsst.afw.geom import transformFactory as tFactory
 import lsst.pex.config as pexConfig
 from lsst.pipe import base as pipeBase
 from lsst.pipe.base import connectionTypes as cT
+from lsst.pex.exceptions import InvalidParameterError
 from lsst.meas.algorithms.loadIndexedReferenceObjects import LoadIndexedReferenceObjectsTask
 from lsst.meas.algorithms import ReferenceObjectLoader
 from lsst.meas.algorithms import brightStarStamps as bSS
@@ -127,6 +128,12 @@ class ProcessBrightStarsConfig(pipeBase.PipelineTaskConfig,
             " annular flux.",
         default=('BAD', 'CR', 'CROSSTALK', 'EDGE', 'NO_DATA', 'SAT', 'SUSPECT', 'UNMASKEDNAN')
     )
+    minPixelsWithinFrame = pexConfig.Field(
+        dtype=int,
+        doc="When a bright star is beyond exposure boundary, what is the minimal number of pixels that still "
+            "fall within the stamp required for it to be saved",
+        default=50
+    )
     refObjLoader = pexConfig.ConfigurableField(
         target=LoadIndexedReferenceObjectsTask,
         doc="reference object loader for astrometric calibration",
@@ -207,8 +214,11 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         GMags = []
         ids = []
         wcs = inputExposure.getWcs()
-        # select stars within input exposure from refcat
-        withinCalexp = refObjLoader.loadPixelBox(inputExposure.getBBox(), wcs, filterName="phot_g_mean")
+        bmp = inputExposure.mask.getMaskPlaneDict()
+        # select stars within, or close enough to input exposure from refcat
+        dilatationExtent = geom.Extent2I(np.array(self.config.stampSize) - self.config.minPixelsWithinFrame)
+        bbox = inputExposure.getBBox().dilatedBy(dilatationExtent)
+        withinCalexp = refObjLoader.loadPixelBox(bbox, wcs, filterName="phot_g_mean")
         refCat = withinCalexp.refCat
         # keep bright objects
         fluxLimit = ((self.config.magLimit*u.ABmag).to(u.nJy)).to_value()
@@ -221,15 +231,47 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         for j, (ra, dec) in enumerate(zip(selectedColumns["coord_ra"], selectedColumns["coord_dec"])):
             sp = geom.SpherePoint(ra, dec, geom.radians)
             cpix = wcs.skyToPixel(sp)
-            # TODO: DM-25894 keep objects on or slightly beyond CCD edge
-            if (cpix[0] >= self.config.stampSize[0]/2
-                    and cpix[0] < inputExposure.getDimensions()[0] - self.config.stampSize[0]/2
-                    and cpix[1] >= self.config.stampSize[1]/2
-                    and cpix[1] < inputExposure.getDimensions()[1] - self.config.stampSize[1]/2):
-                starIms.append(inputExposure.getCutout(sp, geom.Extent2I(self.config.stampSize)))
-                pixCenters.append(cpix)
-                GMags.append(allGMags[j])
-                ids.append(allIds[j])
+            try:
+                starIm = inputExposure.getCutout(sp, geom.Extent2I(self.config.stampSize))
+            except InvalidParameterError:
+                # star is beyond boundary
+                bboxCorner = np.array(cpix) - np.array(self.config.stampSize)/2
+                bboxCorner = geom.Point2I(bboxCorner)
+                # compute bbox as it would be otherwise
+                idealBBox = geom.Box2I(geom.Point2I(bboxCorner), geom.Extent2I(self.config.stampSize))
+                bottomLeft = idealBBox.getBegin()
+                topRight = idealBBox.getEnd()
+                # create smaller subBBox containing overlapping pixels
+                subBBoxCorner = bottomLeft.clone()
+                subBBoxExtent = idealBBox.getDimensions()
+                beyondX = topRight[0] - inputExposure.getDimensions()[0]
+                beyondY = topRight[1] - inputExposure.getDimensions()[1]
+                if bottomLeft[0] < 0:
+                    subBBoxCorner[0] = 0
+                    subBBoxExtent[0] -= np.abs(bottomLeft[0])
+                elif beyondX > 0:
+                    subBBoxExtent[0] -= beyondX
+                if bottomLeft[1] < 0:
+                    subBBoxCorner[1] = 0
+                    subBBoxExtent[1] -= np.abs(bottomLeft[1])
+                elif beyondY > 0:
+                    subBBoxExtent[1] -= beyondY
+                subBBox = geom.Box2I(subBBoxCorner, subBBoxExtent)
+                # extract pixels if any
+                subSp = wcs.pixelToSky(subBBox.getCenter())
+                subStarIm = inputExposure.getCutout(subSp, subBBoxExtent)
+                # and create full-sized stamp with NO_DATA elsewhere
+                starIm = afwImage.ExposureF(idealBBox)
+                starIm.image.array[:] = np.nan
+                starIm.mask.array[:] = 2**bmp['NO_DATA']
+                starIm.image[subBBox] = subStarIm.image
+                starIm.mask[subBBox] = subStarIm.mask
+                if np.all(np.isnan(starIm.image.array)):
+                    continue
+            starIms.append(inputExposure.getCutout(sp, geom.Extent2I(self.config.stampSize)))
+            pixCenters.append(cpix)
+            GMags.append(allGMags[j])
+            ids.append(allIds[j])
         return pipeBase.Struct(starIms=starIms,
                                pixCenters=pixCenters,
                                GMags=GMags,
