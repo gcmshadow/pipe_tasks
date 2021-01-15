@@ -272,7 +272,7 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                 starIm.mask.array[:] = 2**bmp['NO_DATA']
                 starIm.image[subBBox] = subStarIm.image
                 starIm.mask[subBBox] = subStarIm.mask
-            starIms.append(inputExposure.getCutout(sp, geom.Extent2I(self.config.stampSize)))
+            starIms.append(starIm)
             pixCenters.append(cpix)
             GMags.append(allGMags[j])
             ids.append(allIds[j])
