@@ -518,7 +518,7 @@ class CharacterizeImageTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
             summary = self.computeSummary.run(exposure=dmeRes.exposure,
                                               sources=dmeRes.sourceCat,
                                               background=dmeRes.background)
-            dmeRes.exposure.getInfo().setComponent('SUMMARY', summary)
+            dmeRes.exposure.getInfo().setSummary(summary)
 
         self.display("measure", exposure=dmeRes.exposure, sourceCat=dmeRes.sourceCat)
 

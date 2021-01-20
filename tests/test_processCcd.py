@@ -115,7 +115,7 @@ class ProcessCcdTestCase(lsst.utils.tests.TestCase):
                 varMean = varArr.mean(dtype=np.float64)
                 varStdDev = varArr.std(dtype=np.float64)
 
-                summary = exposure.getInfo().getComponent('SUMMARY')
+                summary = exposure.getInfo().getSummary()
 
                 psfShape = exposure.getPsf().computeShape()
                 psfIxx = psfShape.getIxx()
